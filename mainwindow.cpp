@@ -16,6 +16,13 @@ MainWindow::~MainWindow()
 
 void MainWindow::on_startButton_clicked()
 {
-    char* argv[] = {"Univ*.jpg", "--preview"};
-    start(2, argv);
+    char* argv[] = {
+        "Univ1.jpg",
+        "Univ2.jpg",
+        "Univ3.jpg",
+        "Univ4.jpg",
+        "Univ5.jpg",
+        "--preview"
+    };
+    start(5, argv);
 }

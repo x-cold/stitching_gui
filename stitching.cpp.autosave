@@ -42,7 +42,6 @@ int start(int argc, char* argv[])
 
     // 检查图片数量是否 > 1
     int num_images = static_cast<int>(img_names.size());
-    cout << num_images << endl;
     if (num_images < 2)
     {
         LOGLN("Need more images");

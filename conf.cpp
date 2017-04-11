@@ -27,27 +27,45 @@ using namespace cv::detail;
 
 namespace conf {
 
-    // Default command line args
     vector<string> img_names;
+    // 是否预览
     bool preview = false;
+    // 是否器用GPU
     bool try_gpu = false;
+    // 图像匹配分辨率（*100000）
     double work_megapix = 0.6;
+    // 拼接缝隙大小
     double seam_megapix = 0.1;
+    // 拼接分辨率
     double compose_megapix = -1;
+    // 两幅图来自同一全景图置信度
     float conf_thresh = 1.f;
+    // 特征检测算法：surf
     string features_type = "surf";
+    // 特征点检测置信等级，最近邻匹配距离与次近邻匹配距离的比值
+    float match_conf = 0.3f;
+    // 光束平均法 (reproj|ray)
     string ba_cost_func = "ray";
+    // mask
     string ba_refine_mask = "xxxxx";
+    // 波形校正标志
     bool do_wave_correct = true;
+    // 水平波形校正
     WaveCorrectKind wave_correct = detail::WAVE_CORRECT_HORIZ;
+    // 将匹配的图形以点的形式保存到文件中
     bool save_graph = false;
     std::string save_graph_to;
+
+    // 融合的平面（默认球星）
     string warp_type = "spherical";
+    // 光照补偿方法
     int expos_comp_type = ExposureCompensator::GAIN_BLOCKS;
-    float match_conf = 0.3f;
+    // 缝隙估计方法
     string seam_find_type = "gc_color";
     int blend_type = Blender::MULTI_BAND;
     float blend_strength = 5;
+
+    // 拼接结果文件名
     string result_name = "result.jpg";
 
 
@@ -55,14 +73,14 @@ namespace conf {
     {
         if (argc == 1)
         {
-            printUsage();
+            playArgumentError();
             return -1;
         }
-        for (int i = 1; i < argc; ++i)
+        for (int i = 0; i < argc; ++i)
         {
             if (string(argv[i]) == "--help" || string(argv[i]) == "/?")
             {
-                printUsage();
+                playArgumentError();
                 return -1;
             }
             else if (string(argv[i]) == "--preview")
@@ -100,13 +118,6 @@ namespace conf {
             else if (string(argv[i]) == "--result")
             {
                 result_name = argv[i + 1];
-                i++;
-            }
-            else if (string(argv[i]) == "--features")
-            {
-                features_type = argv[i + 1];
-                if (features_type == "orb")
-                    match_conf = 0.3f;
                 i++;
             }
             else if (string(argv[i]) == "--match_conf")
