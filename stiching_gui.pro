@@ -17,7 +17,8 @@ SOURCES += main.cpp\
     conf.cpp \
     helper.cpp \
     stitching.cpp \
-    logger.cpp
+    logger.cpp \
+    stiching_old.cpp
 
 HEADERS  += mainwindow.h \
     logger.h
