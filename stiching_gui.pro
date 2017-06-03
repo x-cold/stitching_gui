@@ -16,9 +16,11 @@ SOURCES += main.cpp\
         mainwindow.cpp \
     conf.cpp \
     helper.cpp \
-    stitching.cpp
+    stitching.cpp \
+    logger.cpp
 
-HEADERS  += mainwindow.h
+HEADERS  += mainwindow.h \
+    logger.h
 
 FORMS    += mainwindow.ui
 

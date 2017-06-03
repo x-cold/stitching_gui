@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 4.0.2, 2017-04-11T11:16:48. -->
+<!-- Written by QtCreator 4.0.2, 2017-06-03T14:43:53. -->
 <qtcreator>
  <data>
   <variable>EnvironmentId</variable>
@@ -288,7 +288,7 @@
     <value type="QString" key="ProjectExplorer.ProjectConfiguration.DisplayName"></value>
     <value type="QString" key="ProjectExplorer.ProjectConfiguration.Id">Qt4ProjectManager.Qt4RunConfiguration:D:/Qt/project/stiching_gui/stiching_gui.pro</value>
     <value type="bool" key="QmakeProjectManager.QmakeRunConfiguration.UseLibrarySearchPath">true</value>
-    <value type="QString" key="Qt4ProjectManager.Qt4RunConfiguration.CommandLineArguments"></value>
+    <value type="QString" key="Qt4ProjectManager.Qt4RunConfiguration.CommandLineArguments">D:\\Qt\\img\\match\\scau*.jpg --output D:\\Qt\\img\\match\\result_scau.jpg</value>
     <value type="QString" key="Qt4ProjectManager.Qt4RunConfiguration.ProFile">stiching_gui.pro</value>
     <value type="bool" key="Qt4ProjectManager.Qt4RunConfiguration.UseDyldImageSuffix">false</value>
     <value type="QString" key="Qt4ProjectManager.Qt4RunConfiguration.UserWorkingDirectory"></value>

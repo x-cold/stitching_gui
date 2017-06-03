@@ -4,6 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+
 #include "opencv2/opencv_modules.hpp"
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/stitching/detail/autocalib.hpp"
@@ -17,46 +18,57 @@
 #include "opencv2/stitching/detail/warpers.hpp"
 #include "opencv2/stitching/warpers.hpp"
 #include "conf.cpp"
-
-#ifndef ENABLE_LOG
-#define ENABLE_LOG 1
+#include "Logger.h"
 
 #endif
+
+/**
+ * 全局变量
+ */
+Logger Log;
+
+int num_images;
+double work_scale = 1;
+double seam_scale = 1;
+double compose_scale = 1;
+double seam_work_aspect = 1;
+
+bool is_work_scale_set = false;
+bool is_seam_scale_set = false;
+bool is_compose_scale_set = false;
+
+Mat full_img, img;
+vector<Mat> images;
+vector<Size> full_img_sizes;
+
+vector<int> indices;
+vector<CameraParams> cameras;
+float warped_image_scale;
+vector<Mat> masks;
+vector<Size> sizes;
+vector<Point> corners;
+vector<Mat> masks_warped;
+vector<Mat> images_warped;
+vector<Mat> images_warped_f;
+Ptr<RotationWarper> warper;
+Ptr<WarperCreator> warper_creator;
+
+char* tmpUsedTime;
 
 using namespace std;
 using namespace cv;
 using namespace cv::detail;
 using namespace conf;
 
-int start(int argc, char* argv[])
+/**
+ * @brief 特征提取
+ * @return
+ */
+vector<ImageFeatures> extractFeature()
 {
-#if ENABLE_LOG
-    int64 app_start_time = getTickCount();
-#endif
 
-    cv::setBreakOnError(true);
-
-    int retval = parseCmdArgs(argc, argv);
-    if (retval)
-        return retval;
-
-    // 检查图片数量是否 > 1
-    int num_images = static_cast<int>(img_names.size());
-    cout << num_images << endl;
-    if (num_images < 2)
-    {
-        LOGLN("Need more images");
-        return -1;
-    }
-
-    double work_scale = 1, seam_scale = 1, compose_scale = 1;
-    bool is_work_scale_set = false, is_seam_scale_set = false, is_compose_scale_set = false;
-
-    // 特征检测
-    LOGLN("Finding features...");
-#if ENABLE_LOG
-    int64 t = getTickCount();
-#endif
+    Log.info("Extract Feature Start..");
+    int64 start = getTickCount();
 
     Ptr<FeaturesFinder> finder;
     if (features_type == "surf")
@@ -69,11 +81,13 @@ int start(int argc, char* argv[])
             finder = new SurfFeaturesFinder();
     }
 
-    Mat full_img, img;
     vector<ImageFeatures> features(num_images);
-    vector<Mat> images(num_images);
-    vector<Size> full_img_sizes(num_images);
-    double seam_work_aspect = 1;
+
+    vector<Mat> _images(num_images);
+    images.assign(_images.begin(), _images.end());
+
+    vector<Size> _full_img_sizes(num_images);
+    full_img_sizes.assign(_full_img_sizes.begin(), _full_img_sizes.end());
 
     for (int i = 0; i < num_images; ++i)
     {
@@ -82,8 +96,8 @@ int start(int argc, char* argv[])
 
         if (full_img.empty())
         {
-            LOGLN("Can't open image " << img_names[i]);
-            return -1;
+            Log.error("Open image failed" + img_names[i]);
+            exit;
         }
         if (work_megapix < 0)
         {
@@ -109,7 +123,6 @@ int start(int argc, char* argv[])
 
         (*finder)(img, features[i]);
         features[i].img_idx = i;
-        LOGLN("Features in image #" << i+1 << ": " << features[i].keypoints.size());
 
         resize(full_img, img, Size(), seam_scale, seam_scale);
         images[i] = img.clone();
@@ -119,28 +132,42 @@ int start(int argc, char* argv[])
     full_img.release();
     img.release();
 
-    LOGLN("Finding features, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
+    Log.info("Extract Feature End..");
+    sprintf(tmpUsedTime, "%f", (getTickCount() - start) / getTickFrequency());
+    Log.info("Used Time:" + (string)tmpUsedTime + " sec");
 
-    LOG("Pairwise matching");
-#if ENABLE_LOG
-    t = getTickCount();
-#endif
+    return features;
+}
+
+/**
+ * @brief 特征匹配
+ * @param features
+ * @return
+ */
+vector<MatchesInfo> matchFeature (vector<ImageFeatures> features)
+{
+    Log.info("Feature Matching Start");
+
+    int64 start = getTickCount();
     vector<MatchesInfo> pairwise_matches;
     BestOf2NearestMatcher matcher(try_gpu, match_conf);
     matcher(features, pairwise_matches);
     matcher.collectGarbage();
-    LOGLN("Pairwise matching, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
 
-    // Check if we should save matches graph
-    if (save_graph)
-    {
-        LOGLN("Saving matches graph...");
-        ofstream f(save_graph_to.c_str());
-        f << matchesGraphAsString(img_names, pairwise_matches, conf_thresh);
-    }
+    Log.info("Feature Matching End");
+    sprintf(tmpUsedTime, "%f", (getTickCount() - start) / getTickFrequency());
+    Log.info("Used Time: " + (string)tmpUsedTime + " sec");
 
-    // Leave only images we are sure are from the same panorama
-    vector<int> indices = leaveBiggestComponent(features, pairwise_matches, conf_thresh);
+    return pairwise_matches;
+}
+
+/**
+ * @brief 还原图像序列
+ * @param pairwise_matches
+ */
+void recoverOrder(vector<ImageFeatures> features, vector<MatchesInfo> pairwise_matches)
+{
+    indices = leaveBiggestComponent(features, pairwise_matches, conf_thresh);
     vector<Mat> img_subset;
     vector<string> img_names_subset;
     vector<Size> full_img_sizes_subset;
@@ -154,15 +181,13 @@ int start(int argc, char* argv[])
     images = img_subset;
     img_names = img_names_subset;
     full_img_sizes = full_img_sizes_subset;
+}
 
-    // Check if we still have enough images
-    num_images = static_cast<int>(img_names.size());
-    if (num_images < 2)
-    {
-        LOGLN("Need more images");
-        return -1;
-    }
-
+/**
+ * @brief 参数估计
+ */
+void estimate(vector<ImageFeatures> features, vector<MatchesInfo> pairwise_matches)
+{
     HomographyBasedEstimator estimator;
     vector<CameraParams> cameras;
     estimator(features, pairwise_matches, cameras);
@@ -172,7 +197,6 @@ int start(int argc, char* argv[])
         Mat R;
         cameras[i].R.convertTo(R, CV_32F);
         cameras[i].R = R;
-        LOGLN("Initial intrinsics #" << indices[i]+1 << ":\n" << cameras[i].K());
     }
 
     Ptr<detail::BundleAdjusterBase> adjuster;
@@ -180,9 +204,10 @@ int start(int argc, char* argv[])
     else if (ba_cost_func == "ray") adjuster = new detail::BundleAdjusterRay();
     else
     {
-        cout << "Unknown bundle adjustment cost function: '" << ba_cost_func << "'.\n";
-        return -1;
+        Log.error("Unknown bundle adjustment cost function: '" + ba_cost_func + "'.\n");
+        exit;
     }
+
     adjuster->setConfThresh(conf_thresh);
     Mat_<uchar> refine_mask = Mat::zeros(3, 3, CV_8U);
     if (ba_refine_mask[0] == 'x') refine_mask(0,0) = 1;
@@ -193,53 +218,70 @@ int start(int argc, char* argv[])
     adjuster->setRefinementMask(refine_mask);
     (*adjuster)(features, pairwise_matches, cameras);
 
-    // Find median focal length
-
+    // 焦距估计
     vector<double> focals;
     for (size_t i = 0; i < cameras.size(); ++i)
     {
-        LOGLN("Camera #" << indices[i]+1 << ":\n" << cameras[i].K());
         focals.push_back(cameras[i].focal);
     }
 
     sort(focals.begin(), focals.end());
-    float warped_image_scale;
     if (focals.size() % 2 == 1)
+    {
         warped_image_scale = static_cast<float>(focals[focals.size() / 2]);
-    else
+    } else {
         warped_image_scale = static_cast<float>(focals[focals.size() / 2 - 1] + focals[focals.size() / 2]) * 0.5f;
+    }
 
+    // 波形校正
     if (do_wave_correct)
     {
         vector<Mat> rmats;
         for (size_t i = 0; i < cameras.size(); ++i)
+        {
             rmats.push_back(cameras[i].R);
+        }
+
         waveCorrect(rmats, wave_correct);
         for (size_t i = 0; i < cameras.size(); ++i)
+        {
             cameras[i].R = rmats[i];
+        }
     }
+}
 
-    LOGLN("Warping images (auxiliary)... ");
-#if ENABLE_LOG
-    t = getTickCount();
-#endif
+/**
+ * @brief wrap
+ */
+void wrap()
+{
+    Log.info("Warping images (auxiliary)");
 
-    vector<Point> corners(num_images);
-    vector<Mat> masks_warped(num_images);
-    vector<Mat> images_warped(num_images);
-    vector<Size> sizes(num_images);
-    vector<Mat> masks(num_images);
+    int64 start = getTickCount();
 
-    // Preapre images masks
+    vector<Point> _corners(num_images);
+    corners.assign(_corners.begin(), _corners.end());
+
+    vector<Mat> _masks_warped(num_images);
+    masks_warped.assign(_masks_warped.begin(), _masks_warped.end());
+
+    vector<Mat> _images_warped(num_images);
+    images_warped.assign(_images_warped.begin(), _images_warped.end());
+
+    vector<Size> _sizes(num_images);
+    sizes.assign(_sizes.begin(), _sizes.end());
+
+    vector<Mat> _masks(num_images);
+    masks.assign(_masks.begin(), _masks.end());
+
+    // 准备拼接 Mask
     for (int i = 0; i < num_images; ++i)
     {
         masks[i].create(images[i].size(), CV_8U);
         masks[i].setTo(Scalar::all(255));
     }
 
-    // Warp images and their masks
-
-    Ptr<WarperCreator> warper_creator;
+    // 创建拼接面
 #if defined(HAVE_OPENCV_GPU)
     if (try_gpu && gpu::getCudaEnabledDeviceCount() > 0)
     {
@@ -269,11 +311,11 @@ int start(int argc, char* argv[])
 
     if (warper_creator.empty())
     {
-        cout << "Can't create the following warper '" << warp_type << "'\n";
-        return 1;
+        Log.error("Can't create the following warper '" + warp_type);
+        exit;
     }
 
-    Ptr<RotationWarper> warper = warper_creator->create(static_cast<float>(warped_image_scale * seam_work_aspect));
+    warper = warper_creator->create(static_cast<float>(warped_image_scale * seam_work_aspect));
 
     for (int i = 0; i < num_images; ++i)
     {
@@ -289,12 +331,69 @@ int start(int argc, char* argv[])
         warper->warp(masks[i], K, cameras[i].R, INTER_NEAREST, BORDER_CONSTANT, masks_warped[i]);
     }
 
-    vector<Mat> images_warped_f(num_images);
+    vector<Mat> _images_warped_f(num_images);
+    images_warped_f.assign(_images_warped_f.begin(), _images_warped_f.end());
+
     for (int i = 0; i < num_images; ++i)
+    {
         images_warped[i].convertTo(images_warped_f[i], CV_32F);
+    }
+    sprintf(tmpUsedTime, "%f", (getTickCount() - start) / getTickFrequency());
+    Log.info("Warping images, time: " + (string)tmpUsedTime + " sec");
+}
 
-    LOGLN("Warping images, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
+int start(int argc, char* argv[])
+{
+    // 开始时间
+    int64 app_start_time = getTickCount();
 
+    int argsAvilable = parseCmdArgs(argc, argv);
+    // 检查参数解析是否正确
+    if (argsAvilable) {
+       Log.error("Parse Command Arguments Filed.");
+       return argsAvilable;
+    }
+
+    // 检查图片数量是否 > 1
+    num_images = static_cast<int>(img_names.size());
+    if (num_images < 2)
+    {
+        Log.error("Need more images");
+        return -1;
+    }
+
+    // 特征提取
+    vector<ImageFeatures> features = extractFeature();
+
+    // 特征匹配
+    vector<MatchesInfo> pairwise_matches = matchFeature(features);
+
+    // 是否保存匹配结果
+    if (save_graph)
+    {
+        Log.info("Saving Matches Start");
+        ofstream f(save_graph_to.c_str());
+        f << matchesGraphAsString(img_names, pairwise_matches, conf_thresh);
+        Log.info("Saving Matches End");
+    }
+
+    recoverOrder(features, pairwise_matches);
+
+    // 序列中图像数量是否大于2
+    num_images = static_cast<int>(img_names.size());
+    if (num_images < 2)
+    {
+        Log.error("Need more images");
+        return -1;
+    }
+
+    // 求单应性矩阵：匹配模型RANSAC提纯 / 参数估计 / 建立变换模型
+    estimate(features, pairwise_matches);
+
+    // 图像拼接
+    wrap();
+
+    // 缝隙估计
     Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(expos_comp_type);
     compensator->feed(corners, images_warped, masks_warped);
 
@@ -327,7 +426,7 @@ int start(int argc, char* argv[])
         seam_finder = new detail::DpSeamFinder(DpSeamFinder::COLOR_GRAD);
     if (seam_finder.empty())
     {
-        cout << "Can't create the following seam finder '" << seam_find_type << "'\n";
+        Log.error("Can't create the following seam finder '" + seam_find_type);
         return 1;
     }
 
@@ -339,11 +438,10 @@ int start(int argc, char* argv[])
     images_warped_f.clear();
     masks.clear();
 
-    LOGLN("Compositing...");
-#if ENABLE_LOG
-    t = getTickCount();
-#endif
+    // 融合
+    Log.info("Compositing");
 
+    int64 start = getTickCount();
     Mat img_warped, img_warped_s;
     Mat dilated_mask, seam_mask, mask, mask_warped;
     Ptr<Blender> blender;
@@ -352,9 +450,7 @@ int start(int argc, char* argv[])
 
     for (int img_idx = 0; img_idx < num_images; ++img_idx)
     {
-        LOGLN("Compositing image #" << indices[img_idx]+1);
-
-        // Read image and resize it if necessary
+        Log.info("Compositing image #" + indices[img_idx]+1);
         full_img = imread(img_names[img_idx]);
         if (!is_compose_scale_set)
         {
@@ -363,10 +459,8 @@ int start(int argc, char* argv[])
             is_compose_scale_set = true;
 
             // Compute relative scales
-            //compose_seam_aspect = compose_scale / seam_scale;
             compose_work_aspect = compose_scale / work_scale;
 
-            // Update warped image scale
             warped_image_scale *= static_cast<float>(compose_work_aspect);
             warper = warper_creator->create(warped_image_scale);
 
@@ -394,9 +488,11 @@ int start(int argc, char* argv[])
             }
         }
         if (abs(compose_scale - 1) > 1e-1)
+        {
             resize(full_img, img, Size(), compose_scale, compose_scale);
-        else
+        } else {
             img = full_img;
+        }
         full_img.release();
         Size img_size = img.size();
 
@@ -434,13 +530,11 @@ int start(int argc, char* argv[])
             {
                 MultiBandBlender* mb = dynamic_cast<MultiBandBlender*>(static_cast<Blender*>(blender));
                 mb->setNumBands(static_cast<int>(ceil(log(blend_width)/log(2.)) - 1.));
-                LOGLN("Multi-band blender, number of bands: " << mb->numBands());
             }
             else if (blend_type == Blender::FEATHER)
             {
                 FeatherBlender* fb = dynamic_cast<FeatherBlender*>(static_cast<Blender*>(blender));
                 fb->setSharpness(1.f/blend_width);
-                LOGLN("Feather blender, sharpness: " << fb->sharpness());
             }
             blender->prepare(corners, sizes);
         }
@@ -452,13 +546,12 @@ int start(int argc, char* argv[])
     Mat result, result_mask;
     blender->blend(result, result_mask);
 
-    LOGLN("Compositing, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
+    sprintf(tmpUsedTime, "%f", (getTickCount() - start) / getTickFrequency());
+    Log.info("Compositing, used time: " + (string)tmpUsedTime + " sec");
 
     imwrite(result_name, result);
 
-    LOGLN("Finished, total time: " << ((getTickCount() - app_start_time) / getTickFrequency()) << " sec");
+    sprintf(tmpUsedTime, "%f", (getTickCount() - start) / getTickFrequency());
+    Log.info("Finished, used time: " + (string)tmpUsedTime  + " sec");
     return 0;
 }
-
-
-#endif
