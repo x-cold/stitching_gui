@@ -1,5 +1,6 @@
 # stitching_gui
-qt opencv
+
+A sample for pano project depended on qt5 & opencv3.
 
 ## Dependencies
 
